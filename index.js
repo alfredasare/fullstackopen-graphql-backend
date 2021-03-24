@@ -27,9 +27,13 @@ const typeDefs = gql`
     type Person {
         name: String!
         phone: String
+        address: Address!
+        id: ID!
+    }
+    
+    type Address {
         street: String!
         city: String!
-        id: ID!
     }
     
     type Query {
@@ -48,11 +52,12 @@ const resolvers = {
 
     //  Default resolver
     Person: {
-        name: (root) => root.name,
-        phone: (root) => root.phone,
-        street: (root) => root.street,
-        city: (root) => root.city,
-        id: (root) => root.id
+        address: (root) => {
+            return {
+                street: root.street,
+                city: root.city
+            };
+        }
     }
 };
 
