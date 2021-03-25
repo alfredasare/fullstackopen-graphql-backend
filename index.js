@@ -1,5 +1,8 @@
 const {ApolloServer, gql, UserInputError} = require("apollo-server");
+const mongoose = require("mongoose");
 const {v1: uuid} = require("uuid");
+const Person = require("./models/person");
+const {MONGODB_URI} = require("./config/config");
 
 let persons = [
     {
@@ -23,6 +26,21 @@ let persons = [
         id: '3d599471-3436-11e9-bc57-8b80ba54c431'
     },
 ];
+
+console.log('connecting to', MONGODB_URI);
+
+mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    useFindAndModify: false,
+    useCreateIndex: true
+})
+    .then(() => {
+        console.log('connected to MongoDB');
+    })
+    .catch((error) => {
+        console.log('error connection to MongoDB:', error.message);
+    });
 
 const typeDefs = gql`
     type Person {
@@ -67,13 +85,13 @@ const typeDefs = gql`
 
 const resolvers = {
     Query: {
-        personCount: () => persons.length,
+        personCount: () => Person.collection.countDocuments(),
         allPersons: (root, {phone}) => {
-            if (!phone) return persons;
-            const byPhone = (person) => phone === "YES"? person.phone : !person.phone;
-            return persons.filter(byPhone);
+            if (!phone) return Person.find({});
+
+            return Person.find({phone: {$exists: phone === 'YES'}});
         },
-        findPerson: (root, {name}) => persons.find(p => p.name === name)
+        findPerson: (root, {name}) => Person.findOne({name})
     },
 
     //  Default resolver
@@ -88,24 +106,14 @@ const resolvers = {
 
     Mutation: {
         addPerson: (root, args) => {
-            if (persons.find(p => args.name === p.name)) {
-                throw new UserInputError('Name must be unique', {
-                    invalidArgs: args.name
-                });
-            }
-
-            const person = {...args, id: uuid()};
-            persons = persons.concat(person);
-            return person;
+            const person = new Person({...args});
+            return person.save();
         },
 
-        editNumber: (root, {input}) => {
-            const person = persons.find(p => p.name === input.name);
-            if (!person) return null;
-
-            const updatedPerson = {...person, phone: input.phone};
-            persons = persons.map(p => p.name === input.name ? updatedPerson : p);
-            return updatedPerson;
+        editNumber: async (root, {input}) => {
+            const person = await Person.findOne({name: input.name});
+            person.phone = input.phone;
+            return person.save();
         }
     }
 };
