@@ -1,31 +1,7 @@
 const {ApolloServer, gql, UserInputError} = require("apollo-server");
 const mongoose = require("mongoose");
-const {v1: uuid} = require("uuid");
 const Person = require("./models/person");
 const {MONGODB_URI} = require("./config/config");
-
-let persons = [
-    {
-        name: "Arto Hellas",
-        phone: "040-123543",
-        street: "Tapiolankatu 5 A",
-        city: "Espoo",
-        id: "3d594650-3436-11e9-bc57-8b80ba54c431"
-    },
-    {
-        name: "Matti Luukkainen",
-        phone: "040-432342",
-        street: "Malminkaari 10 A",
-        city: "Helsinki",
-        id: '3d599470-3436-11e9-bc57-8b80ba54c431'
-    },
-    {
-        name: "Venla Ruuska",
-        street: "Nallemäentie 22 C",
-        city: "Helsinki",
-        id: '3d599471-3436-11e9-bc57-8b80ba54c431'
-    },
-];
 
 console.log('connecting to', MONGODB_URI);
 
@@ -105,15 +81,33 @@ const resolvers = {
     },
 
     Mutation: {
-        addPerson: (root, args) => {
+        addPerson: async (root, args) => {
             const person = new Person({...args});
-            return person.save();
+
+            try {
+                await person.save();
+            } catch (e) {
+                throw new UserInputError(e.message, {
+                    invalidArgs: args
+                });
+            }
+
+            return person;
         },
 
         editNumber: async (root, {input}) => {
             const person = await Person.findOne({name: input.name});
             person.phone = input.phone;
-            return person.save();
+
+            try {
+                await person.save();
+            } catch (e) {
+                throw new UserInputError(e.message, {
+                    invalidArgs: input
+                });
+            }
+
+            return person;
         }
     }
 };
