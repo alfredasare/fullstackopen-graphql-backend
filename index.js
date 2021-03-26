@@ -1,6 +1,8 @@
-const {ApolloServer, gql, UserInputError} = require("apollo-server");
+const {ApolloServer, gql, UserInputError, AuthenticationError} = require("apollo-server");
 const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
 const Person = require("./models/person");
+const User = require("./models/user");
 const {MONGODB_URI} = require("./config/config");
 
 console.log('connecting to', MONGODB_URI);
@@ -17,6 +19,8 @@ mongoose.connect(MONGODB_URI, {
     .catch((error) => {
         console.log('error connection to MongoDB:', error.message);
     });
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const typeDefs = gql`
     type Person {
@@ -41,10 +45,26 @@ const typeDefs = gql`
         phone: String!
     }
     
+    input LoginCredentials {
+        username: String!
+        password: String!
+    }
+    
+    type User {
+        username: String!
+        friends: [Person!]!
+        id: ID!
+    }
+    
+    type Token {
+        value: String!
+    }
+    
     type Query {
         personCount: Int!
         allPersons(phone: YesNo): [Person!]!
         findPerson(name: String!): Person
+        me: User
     }
     
     type Mutation {
@@ -56,6 +76,12 @@ const typeDefs = gql`
         ): Person
         
         editNumber(input: EditNumberInput): Person
+        
+        createUser(username: String!): User
+        
+        login(input: LoginCredentials): Token,
+        
+        addAsFriend(name: String!): User
     }
 `;
 
@@ -67,7 +93,10 @@ const resolvers = {
 
             return Person.find({phone: {$exists: phone === 'YES'}});
         },
-        findPerson: (root, {name}) => Person.findOne({name})
+        findPerson: (root, {name}) => Person.findOne({name}),
+        me: (root, args, context) => {
+            return context.currentUser;
+        }
     },
 
     //  Default resolver
@@ -81,11 +110,17 @@ const resolvers = {
     },
 
     Mutation: {
-        addPerson: async (root, args) => {
+        addPerson: async (root, args, {currentUser}) => {
             const person = new Person({...args});
+
+            if (!currentUser) {
+                throw new AuthenticationError("not authenticated");
+            }
 
             try {
                 await person.save();
+                currentUser.friends = currentUser.friends.concat(person);
+                await currentUser.save();
             } catch (e) {
                 throw new UserInputError(e.message, {
                     invalidArgs: args
@@ -93,6 +128,23 @@ const resolvers = {
             }
 
             return person;
+        },
+
+        addAsFriend: async (root, args, {currentUser}) => {
+            const nonFriendAlready = person => !currentUser.friends.map(f => f._id).includes(person._id);
+
+            if (!currentUser) {
+                throw new AuthenticationError("not authenticated");
+            }
+
+            const person = await Person.findOne({name: args.name});
+            if (nonFriendAlready(person)) {
+                currentUser.friends = currentUser.friends.concat(person);
+            }
+
+            await currentUser.save();
+
+            return currentUser;
         },
 
         editNumber: async (root, {input}) => {
@@ -108,13 +160,49 @@ const resolvers = {
             }
 
             return person;
+        },
+
+        createUser: (root, {username}) => {
+            const user = new User({username});
+
+            return user.save()
+                .catch(e => {
+                    throw new UserInputError(e.message, {
+                        invalidArgs: username
+                    });
+                });
+        },
+
+        login: async(root, {input}) => {
+            const user = await User.findOne({username: input.username});
+
+            if (!user || input.password !== 'plusultra') {
+                throw new UserInputError("wrong credentials");
+            }
+
+            const userForToken = {
+                username: user.username,
+                id: user._id
+            }
+
+            return {value: jwt.sign(userForToken, JWT_SECRET)};
         }
     }
 };
 
 const server = new ApolloServer({
     typeDefs,
-    resolvers
+    resolvers,
+    context: async ({req}) => {
+        const auth = req ? req.headers.authorization: null;
+        if (auth && auth.toLowerCase().startsWith('bearer ')) {
+            const decodedToken = jwt.verify(
+                auth.substring(7), JWT_SECRET
+            );
+            const currentUser = await User.findById(decodedToken.id).populate('friends')
+            return {currentUser};
+        }
+    }
 });
 
 server.listen().then(({url}) => {
