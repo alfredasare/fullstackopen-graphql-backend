@@ -1,4 +1,4 @@
-const {ApolloServer, gql, UserInputError, AuthenticationError} = require("apollo-server");
+const {ApolloServer, gql, UserInputError, AuthenticationError, PubSub} = require("apollo-server");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const Person = require("./models/person");
@@ -6,6 +6,8 @@ const User = require("./models/user");
 const {MONGODB_URI} = require("./config/config");
 
 console.log('connecting to', MONGODB_URI);
+
+const pubsub = new PubSub();
 
 mongoose.connect(MONGODB_URI, {
     useNewUrlParser: true,
@@ -83,6 +85,10 @@ const typeDefs = gql`
         
         addAsFriend(name: String!): User
     }
+    
+    type Subscription {
+        personAdded: Person!
+    }
 `;
 
 const resolvers = {
@@ -126,6 +132,10 @@ const resolvers = {
                     invalidArgs: args
                 });
             }
+
+            await pubsub.publish('PERSON_ADDED', {
+                personAdded: person
+            });
 
             return person;
         },
@@ -187,6 +197,12 @@ const resolvers = {
 
             return {value: jwt.sign(userForToken, JWT_SECRET)};
         }
+    },
+
+    Subscription: {
+        personAdded: {
+            subscribe: () => pubsub.asyncIterator(['PERSON_ADDED'])
+        }
     }
 };
 
@@ -205,6 +221,7 @@ const server = new ApolloServer({
     }
 });
 
-server.listen().then(({url}) => {
+server.listen().then(({url, subscriptionsUrl}) => {
     console.log(`Server ready at ${url}`);
+    console.log(`Subscriptions ready at ${subscriptionsUrl}`);
 });
